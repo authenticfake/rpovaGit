@@ -1,0 +1,270 @@
+{
+  "reqs": [
+    {
+      "id": "REQ-001",
+      "title": "Database Schema & Migrations",
+      "acceptance": [
+        "Schema matches SPEC entities",
+        "Migrations are idempotent",
+        "Indexes on foreign keys and query paths",
+        "Audit log retention policy enforced",
+        "Connection pooling configured"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-002",
+      "title": "Slack Command Handler \u2014 `/coffee`",
+      "acceptance": [
+        "Responds within 2s with order modal",
+        "Modal includes drink type",
+        "size",
+        "customizations",
+        "Validates Slack signature",
+        "Publishes `slack.events` to Kafka",
+        "Returns 200 OK to Slack"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-003",
+      "title": "Order Submission Handler",
+      "acceptance": [
+        "Parses modal submission payload",
+        "Creates CoffeeRun if none active",
+        "Inserts Order into database",
+        "Publishes `coffee.orders` event",
+        "Updates Slack thread with order summary"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-004",
+      "title": "Runner Assignment Algorithm",
+      "acceptance": [
+        "Queries last 30 days of runs",
+        "Excludes users inactive >14 days",
+        "Selects user with lowest run count",
+        "Updates CoffeeRun.runner_user_id",
+        "Publishes `coffee.assignments` event"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-005",
+      "title": "Runner Notification & Reminder",
+      "acceptance": [
+        "Sends DM to assigned runner",
+        "Includes order summary and \"Mark Complete\" button",
+        "Schedules reminder after 5 minutes",
+        "Updates reminder_sent_at timestamp",
+        "Handles Slack API rate limits with retry"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-006",
+      "title": "Run Completion Handler",
+      "acceptance": [
+        "Validates runner identity",
+        "Updates CoffeeRun status to 'completed'",
+        "Publishes `coffee.completions` event",
+        "Posts confirmation in thread",
+        "Inserts AuditLog entry"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-007",
+      "title": "Slack Command Handler \u2014 `/coffee-history`",
+      "acceptance": [
+        "Retrieves last 10 runs from database",
+        "Formats response with timestamp",
+        "runner",
+        "order count",
+        "Responds within 2s",
+        "Handles empty history gracefully",
+        "Validates user authorization"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-008",
+      "title": "Slack Command Handler \u2014 `/coffee-cancel`",
+      "acceptance": [
+        "Validates initiator or runner identity",
+        "Updates CoffeeRun status to 'cancelled'",
+        "Publishes cancellation event",
+        "Notifies participants in thread",
+        "Inserts AuditLog entry"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-009",
+      "title": "User Preferences Storage",
+      "acceptance": [
+        "Stores last 3 orders per user",
+        "Updates order_count and last_ordered_at",
+        "Prunes preferences older than 90 days",
+        "Handles concurrent updates safely",
+        "Indexes for fast retrieval"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-010",
+      "title": "User Preferences Suggestion",
+      "acceptance": [
+        "Retrieves user's last order from preferences",
+        "Pre-fills modal with drink type and size",
+        "Handles missing preferences gracefully",
+        "Updates preferences on new order",
+        "Returns within 500ms"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-011",
+      "title": "Kafka Event Producer",
+      "acceptance": [
+        "Publishes events to correct topics",
+        "Includes correlation IDs for tracing",
+        "Handles broker unavailability with retry",
+        "Validates event schema before publish",
+        "Logs publish failures"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-012",
+      "title": "Kafka Event Consumer \u2014 Order Processing",
+      "acceptance": [
+        "Consumes `coffee.orders` topic",
+        "Triggers runner assignment after 5 min or 3 orders",
+        "Handles duplicate events idempotently",
+        "Commits offsets after processing",
+        "Logs processing errors"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-013",
+      "title": "Kafka Event Consumer \u2014 Audit Logging",
+      "acceptance": [
+        "Consumes all coffee.* topics",
+        "Inserts AuditLog entries",
+        "Handles high throughput (100 events/min)",
+        "Retries on database failure",
+        "Monitors lag and alerts"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-014",
+      "title": "REST API \u2014 Create Run",
+      "acceptance": [
+        "POST /api/v1/runs endpoint",
+        "Validates OIDC token via Kong",
+        "Creates CoffeeRun in database",
+        "Returns run_id and status",
+        "Rate limited to 100 req/min per user"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-015",
+      "title": "REST API \u2014 Add Order",
+      "acceptance": [
+        "POST /api/v1/runs/{run_id}/orders endpoint",
+        "Validates run is active",
+        "Inserts Order into database",
+        "Returns order_id",
+        "Publishes event to Kafka"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-016",
+      "title": "REST API \u2014 Complete Run",
+      "acceptance": [
+        "PATCH /api/v1/runs/{run_id}/complete endpoint",
+        "Validates runner authorization",
+        "Updates run status",
+        "Returns completion timestamp",
+        "Publishes event to Kafka"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-017",
+      "title": "Prometheus Metrics Instrumentation",
+      "acceptance": [
+        "Exposes /metrics endpoint",
+        "Tracks command latency (p50",
+        "p95",
+        "p99)",
+        "Tracks order volume per hour",
+        "Tracks error rates by endpoint",
+        "Tracks Kafka consumer lag"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    },
+    {
+      "id": "REQ-018",
+      "title": "Circuit Breaker for Database",
+      "acceptance": [
+        "Opens after 5 consecutive failures",
+        "Half-open after 30s cooldown",
+        "Returns HTTP 503 during open state",
+        "Logs state transitions",
+        "Integrates with health check endpoint"
+      ],
+      "dependsOn": [],
+      "track": "App",
+      "status": "open"
+    }
+  ],
+  "snapshot": {
+    "total": 18,
+    "open": 18,
+    "in_progress": 0,
+    "done": 0,
+    "deferred": 0,
+    "progressPct": 0
+  }
+}
