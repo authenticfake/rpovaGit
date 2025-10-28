@@ -1,28 +1,48 @@
 #!/usr/bin/env bash
+# CoffeeBuddy Database Upgrade Script
+# Applies all *.up.sql migrations in order
+
 set -euo pipefail
 
-# db_upgrade.sh: Apply all *.up.sql migrations in order
-# Usage: ./db_upgrade.sh [DATABASE_URL]
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SQL_DIR="${SCRIPT_DIR}/../src/storage/sql"
-DATABASE_URL="${1:-${DATABASE_URL:-}}"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SQL_DIR="${PROJECT_ROOT}/src/storage/sql"
 
-if [[ -z "$DATABASE_URL" ]]; then
-    echo "Error: DATABASE_URL not set. Provide as argument or environment variable."
-    echo "Usage: $0 postgresql://user:password@localhost:5432/coffeebuddy"
+# Load environment variables
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+    export $(grep -v '^#' "${PROJECT_ROOT}/.env" | xargs)
+fi
+
+# Validate DATABASE_URL
+if [ -z "${DATABASE_URL:-}" ]; then
+    echo "ERROR: DATABASE_URL environment variable not set"
     exit 1
 fi
 
-echo "==> Applying migrations to: ${DATABASE_URL}"
+echo "=== CoffeeBuddy Database Upgrade ==="
+echo "SQL Directory: ${SQL_DIR}"
+echo "Database URL: ${DATABASE_URL}"
+echo ""
 
 # Find all *.up.sql files and sort them
-for migration in $(find "$SQL_DIR" -name "*.up.sql" | sort); do
-    echo "==> Applying: $(basename "$migration")"
-    psql "$DATABASE_URL" -f "$migration" -v ON_ERROR_STOP=1
+UP_FILES=$(find "${SQL_DIR}" -name "*.up.sql" | sort)
+
+if [ -z "${UP_FILES}" ]; then
+    echo "No migration files found in ${SQL_DIR}"
+    exit 0
+fi
+
+# Apply each migration
+for FILE in ${UP_FILES}; do
+    echo "Applying: $(basename ${FILE})"
+    psql "${DATABASE_URL}" -f "${FILE}" -v ON_ERROR_STOP=1
+    if [ $? -eq 0 ]; then
+        echo "✓ Success"
+    else
+        echo "✗ Failed"
+        exit 1
+    fi
+    echo ""
 done
 
-echo "==> All migrations applied successfully"
-```
-
-```bash
+echo "=== All migrations applied successfully ==="
