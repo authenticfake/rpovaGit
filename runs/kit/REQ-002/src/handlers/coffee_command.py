@@ -1,20 +1,31 @@
 """
 Slack Command Handler for /coffee
 
-Handles the /coffee slash command, validates Slack signature,
-publishes event to Kafka, and returns a modal for order submission.
-"""
+Handles the /coffee slash command by:
+1. Validating Slack request signature
+2. Publishing event to Kafka
+3. Returning modal view to user
 
+Follows composition-first design with injected dependencies.
+"""
 import hashlib
 import hmac
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Protocol
 
 from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
+
+
+class KafkaProducerProtocol(Protocol):
+    """Protocol for Kafka producer dependency."""
+
+    async def publish(self, topic: str, key: str, value: dict, headers: dict | None = None) -> None:
+        """Publish event to Kafka topic."""
+        ...
 
 
 class SlackSignatureValidator:
@@ -29,19 +40,14 @@ class SlackSignatureValidator:
         """
         self.signing_secret = signing_secret.encode()
 
-    def validate(
-        self,
-        timestamp: str,
-        body: bytes,
-        signature: str,
-    ) -> bool:
+    def validate(self, timestamp: str, body: bytes, signature: str) -> bool:
         """
         Validate Slack request signature.
 
         Args:
-            timestamp: X-Slack-Request-Timestamp header value
+            timestamp: X-Slack-Request-Timestamp header
             body: Raw request body bytes
-            signature: X-Slack-Signature header value
+            signature: X-Slack-Signature header
 
         Returns:
             True if signature is valid, False otherwise
@@ -51,22 +57,13 @@ class SlackSignatureValidator:
         """
         # Prevent replay attacks - reject requests older than 5 minutes
         current_time = int(time.time())
-        request_time = int(timestamp)
-        if abs(current_time - request_time) > 300:
-            raise HTTPException(
-                status_code=401,
-                detail="Request timestamp too old",
-            )
+        if abs(current_time - int(timestamp)) > 300:
+            raise HTTPException(status_code=401, detail="Request timestamp too old")
 
         # Compute expected signature
         sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
         expected_signature = (
-            "v0="
-            + hmac.new(
-                self.signing_secret,
-                sig_basestring.encode(),
-                hashlib.sha256,
-            ).hexdigest()
+            "v0=" + hmac.new(self.signing_secret, sig_basestring.encode(), hashlib.sha256).hexdigest()
         )
 
         # Constant-time comparison to prevent timing attacks
@@ -74,32 +71,35 @@ class SlackSignatureValidator:
 
 
 class CoffeeCommandHandler:
-    """Handles /coffee slash command from Slack."""
+    """Handles /coffee slash command with signature validation and event publishing."""
 
     def __init__(
         self,
         signature_validator: SlackSignatureValidator,
-        kafka_producer: Any,  # KafkaProducer interface
+        kafka_producer: KafkaProducerProtocol,
+        kafka_topic: str = "slack.events",
     ):
         """
-        Initialize handler with dependencies.
+        Initialize handler with injected dependencies.
 
         Args:
             signature_validator: Slack signature validator
-            kafka_producer: Kafka producer for publishing events
+            kafka_producer: Kafka producer for event publishing
+            kafka_topic: Kafka topic for Slack events
         """
         self.signature_validator = signature_validator
         self.kafka_producer = kafka_producer
+        self.kafka_topic = kafka_topic
 
-    async def handle(self, request: Request) -> Dict[str, Any]:
+    async def handle(self, request: Request) -> dict:
         """
-        Handle /coffee slash command.
+        Handle /coffee slash command request.
 
         Args:
             request: FastAPI request object
 
         Returns:
-            Slack modal response payload
+            Slack modal view response
 
         Raises:
             HTTPException: If signature validation fails
@@ -113,7 +113,7 @@ class CoffeeCommandHandler:
 
         # Validate signature
         if not self.signature_validator.validate(timestamp, body, signature):
-            logger.warning("Invalid Slack signature")
+            logger.warning("Invalid Slack signature", extra={"timestamp": timestamp})
             raise HTTPException(status_code=401, detail="Invalid signature")
 
         # Parse form data
@@ -124,40 +124,44 @@ class CoffeeCommandHandler:
         team_id = form_data.get("team_id")
         command = form_data.get("command")
 
-        # Publish event to Kafka for audit/processing
-        event = {
-            "event_type": "slack.command.received",
+        # Publish event to Kafka for async processing
+        event_payload = {
+            "event_type": "slash_command",
             "command": command,
+            "trigger_id": trigger_id,
             "user_id": user_id,
             "channel_id": channel_id,
             "team_id": team_id,
-            "trigger_id": trigger_id,
             "timestamp": timestamp,
         }
 
+        correlation_id = f"{user_id}_{int(time.time() * 1000)}"
+        headers = {"correlation_id": correlation_id}
+
         try:
             await self.kafka_producer.publish(
-                topic="slack.events",
-                key=user_id,
-                value=event,
+                topic=self.kafka_topic, key=user_id, value=event_payload, headers=headers
+            )
+            logger.info(
+                "Published slash command event",
+                extra={"correlation_id": correlation_id, "user_id": user_id, "command": command},
             )
         except Exception as e:
-            logger.error(f"Failed to publish event to Kafka: {e}")
-            # Continue - Kafka failure should not block user interaction
+            logger.error("Failed to publish event to Kafka", extra={"error": str(e)}, exc_info=True)
+            # Continue to return modal even if Kafka publish fails (graceful degradation)
 
-        # Return modal response
-        modal = self._build_order_modal(trigger_id)
-        return modal
+        # Return modal view response
+        return self._build_modal_response(trigger_id)
 
-    def _build_order_modal(self, trigger_id: str) -> Dict[str, Any]:
+    def _build_modal_response(self, trigger_id: str) -> dict:
         """
-        Build Slack modal for order submission.
+        Build Slack modal view for order submission.
 
         Args:
             trigger_id: Slack trigger_id for opening modal
 
         Returns:
-            Slack modal payload
+            Slack view.open API payload
         """
         return {
             "trigger_id": trigger_id,
@@ -165,101 +169,43 @@ class CoffeeCommandHandler:
                 "type": "modal",
                 "callback_id": "coffee_order_modal",
                 "title": {"type": "plain_text", "text": "Coffee Order"},
-                "submit": {"type": "plain_text", "text": "Submit Order"},
+                "submit": {"type": "plain_text", "text": "Submit"},
                 "close": {"type": "plain_text", "text": "Cancel"},
                 "blocks": [
                     {
-                        "type": "section",
+                        "type": "input",
                         "block_id": "drink_type_block",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": "Select your drink type:",
-                        },
-                        "accessory": {
+                        "element": {
                             "type": "static_select",
                             "action_id": "drink_type",
-                            "placeholder": {
-                                "type": "plain_text",
-                                "text": "Choose a drink",
-                            },
+                            "placeholder": {"type": "plain_text", "text": "Select drink type"},
                             "options": [
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Espresso",
-                                    },
-                                    "value": "espresso",
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Latte",
-                                    },
-                                    "value": "latte",
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Cappuccino",
-                                    },
-                                    "value": "cappuccino",
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Americano",
-                                    },
-                                    "value": "americano",
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Mocha",
-                                    },
-                                    "value": "mocha",
-                                },
+                                {"text": {"type": "plain_text", "text": "Espresso"}, "value": "espresso"},
+                                {"text": {"type": "plain_text", "text": "Latte"}, "value": "latte"},
+                                {"text": {"type": "plain_text", "text": "Cappuccino"}, "value": "cappuccino"},
+                                {"text": {"type": "plain_text", "text": "Americano"}, "value": "americano"},
+                                {"text": {"type": "plain_text", "text": "Mocha"}, "value": "mocha"},
                             ],
                         },
+                        "label": {"type": "plain_text", "text": "Drink Type"},
                     },
                     {
-                        "type": "section",
+                        "type": "input",
                         "block_id": "size_block",
-                        "text": {"type": "mrkdwn", "text": "Select size:"},
-                        "accessory": {
+                        "element": {
                             "type": "radio_buttons",
                             "action_id": "size",
                             "options": [
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Small",
-                                    },
-                                    "value": "small",
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Medium",
-                                    },
-                                    "value": "medium",
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Large",
-                                    },
-                                    "value": "large",
-                                },
+                                {"text": {"type": "plain_text", "text": "Small"}, "value": "small"},
+                                {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
+                                {"text": {"type": "plain_text", "text": "Large"}, "value": "large"},
                             ],
                         },
+                        "label": {"type": "plain_text", "text": "Size"},
                     },
                     {
                         "type": "input",
                         "block_id": "customizations_block",
-                        "label": {
-                            "type": "plain_text",
-                            "text": "Customizations (optional)",
-                        },
                         "element": {
                             "type": "plain_text_input",
                             "action_id": "customizations",
@@ -269,6 +215,7 @@ class CoffeeCommandHandler:
                                 "text": "e.g., extra shot, oat milk, no sugar",
                             },
                         },
+                        "label": {"type": "plain_text", "text": "Customizations"},
                         "optional": True,
                     },
                 ],
@@ -276,22 +223,21 @@ class CoffeeCommandHandler:
         }
 
 
-# FastAPI route integration
-async def coffee_command_route(
-    request: Request,
-    handler: CoffeeCommandHandler,
-) -> Dict[str, Any]:
+def create_coffee_command_handler(
+    signing_secret: str, kafka_producer: KafkaProducerProtocol
+) -> CoffeeCommandHandler:
     """
-    FastAPI route for /coffee command.
+    Factory function to create CoffeeCommandHandler with dependencies.
 
     Args:
-        request: FastAPI request
-        handler: CoffeeCommandHandler instance (injected)
+        signing_secret: Slack app signing secret
+        kafka_producer: Kafka producer instance
 
     Returns:
-        Slack modal response
+        Configured CoffeeCommandHandler instance
     """
-    return await handler.handle(request)
+    validator = SlackSignatureValidator(signing_secret)
+    return CoffeeCommandHandler(validator, kafka_producer)
 ```
 
-```python
+```markdown

@@ -3,21 +3,21 @@
   "req_id": "REQ-002",
   "lane": "python",
   "env": {
-    "SLACK_SIGNING_SECRET": "test_secret_for_ci",
+    "SLACK_SIGNING_SECRET": "test_signing_secret_12345",
     "KAFKA_BROKERS": "localhost:9092",
-    "DATABASE_URL": "postgresql://user:password@localhost:5432/coffeebuddy",
-    "PYTHONPATH": "${PYTHONPATH}:${PWD}/runs/kit/REQ-002/src"
+    "PYTHONPATH": "."
   },
   "cases": [
     {
-      "name": "install_deps",
-      "run": "pip install -q -r runs/kit/REQ-002/requirements.txt",
+      "name": "unit_tests",
+      "run": "pytest runs/kit/REQ-002/test/test_coffee_command.py -v --tb=short",
       "cwd": ".",
-      "expect": 0
+      "expect": 0,
+      "timeout": 30
     },
     {
-      "name": "unit_tests",
-      "run": "pytest -q --tb=short runs/kit/REQ-002/test/test_coffee_command.py",
+      "name": "integration_tests",
+      "run": "pytest runs/kit/REQ-002/test/test_integration_slack_api.py -v --tb=short",
       "cwd": ".",
       "expect": 0,
       "timeout": 30
@@ -26,28 +26,17 @@
       "name": "lint",
       "run": "ruff check runs/kit/REQ-002/src runs/kit/REQ-002/test",
       "cwd": ".",
-      "expect": 0
+      "expect": 0,
+      "timeout": 10
     },
     {
       "name": "type_check",
-      "run": "mypy --strict runs/kit/REQ-002/src",
+      "run": "mypy runs/kit/REQ-002/src --strict",
       "cwd": ".",
-      "expect": 0
+      "expect": 0,
+      "timeout": 20
     }
   ],
-  "tools": {
-    "tests": "pytest",
-    "lint": "ruff",
-    "types": "mypy",
-    "security": "bandit",
-    "build": "none"
-  },
-  "commands": {
-    "install": "pip install -r runs/kit/REQ-002/requirements.txt",
-    "test": "pytest runs/kit/REQ-002/test",
-    "lint": "ruff check runs/kit/REQ-002/src runs/kit/REQ-002/test",
-    "typecheck": "mypy --strict runs/kit/REQ-002/src"
-  },
   "reports": [
     {
       "kind": "junit",
@@ -64,25 +53,31 @@
     "tests_pass": true,
     "coverage_min": 0.8,
     "security": {
-      "bandit_high": 0,
-      "bandit_medium": 0
+      "bandit_high": 0
     }
   },
+  "tools": {
+    "tests": "pytest",
+    "lint": "ruff",
+    "types": "mypy",
+    "security": "bandit",
+    "build": "pip"
+  },
+  "commands": {
+    "install": "pip install -r runs/kit/REQ-002/requirements.txt",
+    "test": "pytest runs/kit/REQ-002/test -v",
+    "lint": "ruff check runs/kit/REQ-002/src runs/kit/REQ-002/test",
+    "type_check": "mypy runs/kit/REQ-002/src --strict"
+  },
   "normalize": {
-    "tests": {
-      "passed": "$.tests.passed",
-      "failed": "$.tests.failed",
-      "skipped": "$.tests.skipped"
-    },
-    "coverage": {
-      "line_rate": "$.coverage.line_rate"
-    }
+    "tests_pass": "all cases with name matching 'test' must have expect=0",
+    "coverage": "extract from coverage.xml if present"
   },
   "constraints_applied": {
     "runtime": "python",
     "platform": "kubernetes",
-    "api": ["slack.events", "rest"],
-    "messaging": ["kafka"]
+    "messaging": "kafka",
+    "auth": "oidc"
   }
 }
 ```

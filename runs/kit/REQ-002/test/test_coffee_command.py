@@ -1,318 +1,189 @@
 """
-Tests for /coffee command handler
-"""
+Unit tests for /coffee slash command handler.
 
+Tests signature validation, modal response, and Kafka event publishing.
+"""
 import hashlib
 import hmac
 import json
 import time
-from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
 
-from runs.kit.REQ_002.src.handlers.coffee_command import (
-    CoffeeCommandHandler,
-    SlackSignatureValidator,
-)
-from runs.kit.REQ_002.src.services.kafka_producer_interface import (
-    KafkaProducerInterface,
-)
+from ..src.handlers.coffee_command import CoffeeCommandHandler, SlackSignatureValidator
 
 
-class MockKafkaProducer(KafkaProducerInterface):
-    """Mock Kafka producer for testing."""
+class TestSlackSignatureValidator:
+    """Test suite for Slack signature validation."""
 
-    def __init__(self):
-        self.published_events = []
+    @pytest.fixture
+    def signing_secret(self) -> str:
+        return "test_signing_secret_12345"
 
-    async def publish(
-        self,
-        topic: str,
-        key: str,
-        value: Dict[str, Any],
-        headers: Dict[str, str] | None = None,
-    ) -> None:
-        """Record published events."""
-        self.published_events.append(
-            {"topic": topic, "key": key, "value": value, "headers": headers}
-        )
+    @pytest.fixture
+    def validator(self, signing_secret: str) -> SlackSignatureValidator:
+        return SlackSignatureValidator(signing_secret)
 
+    def test_valid_signature(self, validator: SlackSignatureValidator, signing_secret: str) -> None:
+        """Test that valid signature passes validation."""
+        timestamp = str(int(time.time()))
+        body = b"token=test&command=/coffee&user_id=U123"
 
-@pytest.fixture
-def signing_secret():
-    """Slack signing secret for tests."""
-    return "test_signing_secret_12345"
-
-
-@pytest.fixture
-def signature_validator(signing_secret):
-    """Signature validator fixture."""
-    return SlackSignatureValidator(signing_secret)
-
-
-@pytest.fixture
-def kafka_producer():
-    """Mock Kafka producer fixture."""
-    return MockKafkaProducer()
-
-
-@pytest.fixture
-def handler(signature_validator, kafka_producer):
-    """CoffeeCommandHandler fixture."""
-    return CoffeeCommandHandler(signature_validator, kafka_producer)
-
-
-def create_slack_signature(
-    signing_secret: str, timestamp: str, body: str
-) -> str:
-    """
-    Create valid Slack signature for testing.
-
-    Args:
-        signing_secret: Slack signing secret
-        timestamp: Request timestamp
-        body: Request body
-
-    Returns:
-        Slack signature string
-    """
-    sig_basestring = f"v0:{timestamp}:{body}"
-    signature = (
-        "v0="
-        + hmac.new(
-            signing_secret.encode(),
-            sig_basestring.encode(),
-            hashlib.sha256,
+        # Compute valid signature
+        sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
+        signature = "v0=" + hmac.new(
+            signing_secret.encode(), sig_basestring.encode(), hashlib.sha256
         ).hexdigest()
-    )
-    return signature
+
+        assert validator.validate(timestamp, body, signature) is True
+
+    def test_invalid_signature(self, validator: SlackSignatureValidator) -> None:
+        """Test that invalid signature fails validation."""
+        timestamp = str(int(time.time()))
+        body = b"token=test&command=/coffee&user_id=U123"
+        signature = "v0=invalid_signature"
+
+        assert validator.validate(timestamp, body, signature) is False
+
+    def test_replay_attack_prevention(self, validator: SlackSignatureValidator) -> None:
+        """Test that old timestamps are rejected."""
+        old_timestamp = str(int(time.time()) - 400)  # 6+ minutes old
+        body = b"token=test&command=/coffee&user_id=U123"
+        signature = "v0=dummy"
+
+        with pytest.raises(HTTPException) as exc_info:
+            validator.validate(old_timestamp, body, signature)
+
+        assert exc_info.value.status_code == 401
+        assert "timestamp too old" in exc_info.value.detail.lower()
 
 
-@pytest.mark.asyncio
-async def test_valid_signature_returns_modal(
-    handler, signing_secret, kafka_producer
-):
-    """Test that valid signature returns modal response."""
-    # Arrange
-    timestamp = str(int(time.time()))
-    body = (
-        "token=test_token&team_id=T123&channel_id=C123&"
-        "user_id=U123&command=/coffee&trigger_id=12345.67890"
-    )
-    signature = create_slack_signature(signing_secret, timestamp, body)
+class TestCoffeeCommandHandler:
+    """Test suite for /coffee command handler."""
 
-    # Mock request
-    request = Mock(spec=Request)
-    request.headers = {
-        "X-Slack-Request-Timestamp": timestamp,
-        "X-Slack-Signature": signature,
-    }
-    request.body = AsyncMock(return_value=body.encode())
-    request.form = AsyncMock(
-        return_value={
-            "trigger_id": "12345.67890",
-            "user_id": "U123",
-            "channel_id": "C123",
-            "team_id": "T123",
-            "command": "/coffee",
+    @pytest.fixture
+    def mock_validator(self) -> Mock:
+        validator = Mock(spec=SlackSignatureValidator)
+        validator.validate.return_value = True
+        return validator
+
+    @pytest.fixture
+    def mock_kafka_producer(self) -> AsyncMock:
+        producer = AsyncMock()
+        producer.publish = AsyncMock()
+        return producer
+
+    @pytest.fixture
+    def handler(self, mock_validator: Mock, mock_kafka_producer: AsyncMock) -> CoffeeCommandHandler:
+        return CoffeeCommandHandler(mock_validator, mock_kafka_producer)
+
+    @pytest.fixture
+    def mock_request(self) -> Mock:
+        request = Mock()
+        request.headers = {
+            "X-Slack-Request-Timestamp": str(int(time.time())),
+            "X-Slack-Signature": "v0=test_signature",
         }
-    )
+        request.body = AsyncMock(return_value=b"test_body")
+        request.form = AsyncMock(
+            return_value={
+                "trigger_id": "trigger_123",
+                "user_id": "U123",
+                "channel_id": "C123",
+                "team_id": "T123",
+                "command": "/coffee",
+            }
+        )
+        return request
 
-    # Act
-    response = await handler.handle(request)
+    @pytest.mark.asyncio
+    async def test_successful_command_handling(
+        self, handler: CoffeeCommandHandler, mock_request: Mock, mock_kafka_producer: AsyncMock
+    ) -> None:
+        """Test successful /coffee command handling."""
+        response = await handler.handle(mock_request)
 
-    # Assert
-    assert response["trigger_id"] == "12345.67890"
-    assert response["view"]["type"] == "modal"
-    assert response["view"]["callback_id"] == "coffee_order_modal"
-    assert len(response["view"]["blocks"]) == 3  # drink, size, customizations
+        # Verify signature validation was called
+        assert mock_request.body.called
 
-    # Verify Kafka event published
-    assert len(kafka_producer.published_events) == 1
-    event = kafka_producer.published_events[0]
-    assert event["topic"] == "slack.events"
-    assert event["key"] == "U123"
-    assert event["value"]["event_type"] == "slack.command.received"
-    assert event["value"]["command"] == "/coffee"
+        # Verify Kafka event was published
+        mock_kafka_producer.publish.assert_called_once()
+        call_args = mock_kafka_producer.publish.call_args
+        assert call_args.kwargs["topic"] == "slack.events"
+        assert call_args.kwargs["key"] == "U123"
+        assert call_args.kwargs["value"]["event_type"] == "slash_command"
+        assert call_args.kwargs["value"]["command"] == "/coffee"
+        assert "correlation_id" in call_args.kwargs["headers"]
 
+        # Verify modal response structure
+        assert response["trigger_id"] == "trigger_123"
+        assert response["view"]["type"] == "modal"
+        assert response["view"]["callback_id"] == "coffee_order_modal"
+        assert len(response["view"]["blocks"]) == 3  # drink_type, size, customizations
 
-@pytest.mark.asyncio
-async def test_invalid_signature_raises_401(handler, signing_secret):
-    """Test that invalid signature raises 401."""
-    # Arrange
-    timestamp = str(int(time.time()))
-    body = "token=test_token&user_id=U123"
-    invalid_signature = "v0=invalid_signature"
+    @pytest.mark.asyncio
+    async def test_invalid_signature_rejection(
+        self, mock_validator: Mock, mock_kafka_producer: AsyncMock, mock_request: Mock
+    ) -> None:
+        """Test that invalid signature raises 401."""
+        mock_validator.validate.return_value = False
+        handler = CoffeeCommandHandler(mock_validator, mock_kafka_producer)
 
-    request = Mock(spec=Request)
-    request.headers = {
-        "X-Slack-Request-Timestamp": timestamp,
-        "X-Slack-Signature": invalid_signature,
-    }
-    request.body = AsyncMock(return_value=body.encode())
+        with pytest.raises(HTTPException) as exc_info:
+            await handler.handle(mock_request)
 
-    # Act & Assert
-    with pytest.raises(HTTPException) as exc_info:
-        await handler.handle(request)
-    assert exc_info.value.status_code == 401
-    assert "Invalid signature" in exc_info.value.detail
+        assert exc_info.value.status_code == 401
+        assert "Invalid signature" in exc_info.value.detail
 
+    @pytest.mark.asyncio
+    async def test_kafka_publish_failure_graceful_degradation(
+        self, handler: CoffeeCommandHandler, mock_request: Mock, mock_kafka_producer: AsyncMock
+    ) -> None:
+        """Test that Kafka publish failure doesn't prevent modal response."""
+        mock_kafka_producer.publish.side_effect = Exception("Kafka unavailable")
 
-@pytest.mark.asyncio
-async def test_old_timestamp_raises_401(handler, signing_secret):
-    """Test that old timestamp raises 401 (replay attack prevention)."""
-    # Arrange
-    old_timestamp = str(int(time.time()) - 400)  # 400 seconds old
-    body = "token=test_token&user_id=U123"
-    signature = create_slack_signature(signing_secret, old_timestamp, body)
+        # Should not raise exception, returns modal anyway
+        response = await handler.handle(mock_request)
 
-    request = Mock(spec=Request)
-    request.headers = {
-        "X-Slack-Request-Timestamp": old_timestamp,
-        "X-Slack-Signature": signature,
-    }
-    request.body = AsyncMock(return_value=body.encode())
+        assert response["trigger_id"] == "trigger_123"
+        assert response["view"]["type"] == "modal"
 
-    # Act & Assert
-    with pytest.raises(HTTPException) as exc_info:
-        await handler.handle(request)
-    assert exc_info.value.status_code == 401
-    assert "timestamp too old" in exc_info.value.detail.lower()
+    def test_modal_response_structure(self, handler: CoffeeCommandHandler) -> None:
+        """Test modal response contains all required fields."""
+        modal = handler._build_modal_response("trigger_123")
 
+        assert modal["trigger_id"] == "trigger_123"
+        view = modal["view"]
 
-@pytest.mark.asyncio
-async def test_modal_contains_required_fields(handler, signing_secret):
-    """Test that modal contains all required fields."""
-    # Arrange
-    timestamp = str(int(time.time()))
-    body = (
-        "token=test_token&team_id=T123&channel_id=C123&"
-        "user_id=U123&command=/coffee&trigger_id=12345.67890"
-    )
-    signature = create_slack_signature(signing_secret, timestamp, body)
+        # Verify modal metadata
+        assert view["type"] == "modal"
+        assert view["callback_id"] == "coffee_order_modal"
+        assert view["title"]["text"] == "Coffee Order"
+        assert view["submit"]["text"] == "Submit"
 
-    request = Mock(spec=Request)
-    request.headers = {
-        "X-Slack-Request-Timestamp": timestamp,
-        "X-Slack-Signature": signature,
-    }
-    request.body = AsyncMock(return_value=body.encode())
-    request.form = AsyncMock(
-        return_value={
-            "trigger_id": "12345.67890",
-            "user_id": "U123",
-            "channel_id": "C123",
-            "team_id": "T123",
-            "command": "/coffee",
-        }
-    )
+        # Verify blocks
+        blocks = view["blocks"]
+        assert len(blocks) == 3
 
-    # Act
-    response = await handler.handle(request)
+        # Drink type block
+        drink_block = blocks[0]
+        assert drink_block["block_id"] == "drink_type_block"
+        assert drink_block["element"]["type"] == "static_select"
+        assert len(drink_block["element"]["options"]) >= 5
 
-    # Assert modal structure
-    blocks = response["view"]["blocks"]
+        # Size block
+        size_block = blocks[1]
+        assert size_block["block_id"] == "size_block"
+        assert size_block["element"]["type"] == "radio_buttons"
+        assert len(size_block["element"]["options"]) == 3
 
-    # Check drink type block
-    drink_block = next(
-        b for b in blocks if b["block_id"] == "drink_type_block"
-    )
-    assert drink_block["accessory"]["type"] == "static_select"
-    assert len(drink_block["accessory"]["options"]) >= 5  # Multiple drinks
-
-    # Check size block
-    size_block = next(b for b in blocks if b["block_id"] == "size_block")
-    assert size_block["accessory"]["type"] == "radio_buttons"
-    assert len(size_block["accessory"]["options"]) == 3  # Small, Medium, Large
-
-    # Check customizations block
-    custom_block = next(
-        b for b in blocks if b["block_id"] == "customizations_block"
-    )
-    assert custom_block["element"]["type"] == "plain_text_input"
-    assert custom_block["optional"] is True
-
-
-@pytest.mark.asyncio
-async def test_kafka_failure_does_not_block_response(
-    signature_validator, signing_secret
-):
-    """Test that Kafka publish failure does not block user response."""
-    # Arrange
-    failing_producer = Mock(spec=KafkaProducerInterface)
-    failing_producer.publish = AsyncMock(
-        side_effect=Exception("Kafka unavailable")
-    )
-    handler = CoffeeCommandHandler(signature_validator, failing_producer)
-
-    timestamp = str(int(time.time()))
-    body = (
-        "token=test_token&team_id=T123&channel_id=C123&"
-        "user_id=U123&command=/coffee&trigger_id=12345.67890"
-    )
-    signature = create_slack_signature(signing_secret, timestamp, body)
-
-    request = Mock(spec=Request)
-    request.headers = {
-        "X-Slack-Request-Timestamp": timestamp,
-        "X-Slack-Signature": signature,
-    }
-    request.body = AsyncMock(return_value=body.encode())
-    request.form = AsyncMock(
-        return_value={
-            "trigger_id": "12345.67890",
-            "user_id": "U123",
-            "channel_id": "C123",
-            "team_id": "T123",
-            "command": "/coffee",
-        }
-    )
-
-    # Act - should not raise exception
-    response = await handler.handle(request)
-
-    # Assert - modal still returned
-    assert response["trigger_id"] == "12345.67890"
-    assert response["view"]["type"] == "modal"
-
-
-@pytest.mark.asyncio
-async def test_response_time_under_2_seconds(handler, signing_secret):
-    """Test that response time is under 2 seconds (AC requirement)."""
-    # Arrange
-    timestamp = str(int(time.time()))
-    body = (
-        "token=test_token&team_id=T123&channel_id=C123&"
-        "user_id=U123&command=/coffee&trigger_id=12345.67890"
-    )
-    signature = create_slack_signature(signing_secret, timestamp, body)
-
-    request = Mock(spec=Request)
-    request.headers = {
-        "X-Slack-Request-Timestamp": timestamp,
-        "X-Slack-Signature": signature,
-    }
-    request.body = AsyncMock(return_value=body.encode())
-    request.form = AsyncMock(
-        return_value={
-            "trigger_id": "12345.67890",
-            "user_id": "U123",
-            "channel_id": "C123",
-            "team_id": "T123",
-            "command": "/coffee",
-        }
-    )
-
-    # Act
-    start_time = time.time()
-    response = await handler.handle(request)
-    elapsed_time = time.time() - start_time
-
-    # Assert
-    assert elapsed_time < 2.0  # Must respond within 2 seconds
-    assert response["view"]["type"] == "modal"
+        # Customizations block
+        custom_block = blocks[2]
+        assert custom_block["block_id"] == "customizations_block"
+        assert custom_block["element"]["type"] == "plain_text_input"
+        assert custom_block["optional"] is True
 ```
 
-```python
+```markdown

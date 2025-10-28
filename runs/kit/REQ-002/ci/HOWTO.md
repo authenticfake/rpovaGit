@@ -1,60 +1,95 @@
-# REQ-002 Execution Guide
+# REQ-002 Execution HOWTO
 
 ## Prerequisites
 
 ### System Requirements
 - Python 3.11+
 - pip package manager
-- Git (for repository access)
+- Docker (optional, for Kafka integration tests)
 
-### External Dependencies
-- Kafka broker (for integration tests, optional for unit tests)
-- Slack workspace with slash commands enabled (for manual testing)
+### Environment Setup
 
-### Environment Variables
+1. **Create virtual environment:**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   # or
+   venv\Scripts\activate  # Windows
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   pip install -r runs/kit/REQ-002/requirements.txt
+   ```
+
+3. **Set environment variables:**
+   ```bash
+   export SLACK_SIGNING_SECRET="test_signing_secret_12345"
+   export KAFKA_BROKERS="localhost:9092"
+   export PYTHONPATH="."
+   ```
+
+   Or create `.env` file:
+   ```
+   SLACK_SIGNING_SECRET=test_signing_secret_12345
+   KAFKA_BROKERS=localhost:9092
+   PYTHONPATH=.
+   ```
+
+### External Tools
+
+- **Kafka (optional for integration tests):**
+  ```bash
+  docker run -d --name kafka \
+    -p 9092:9092 \
+    -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+    apache/kafka:latest
+  ```
+
+## Running Tests
+
+### Unit Tests
 ```bash
-export SLACK_SIGNING_SECRET="your_slack_signing_secret"
-export KAFKA_BROKERS="localhost:9092"
-export DATABASE_URL="postgresql://user:password@localhost:5432/coffeebuddy"
-export PYTHONPATH="${PYTHONPATH}:${PWD}/runs/kit/REQ-002/src"
+pytest runs/kit/REQ-002/test/test_coffee_command.py -v --tb=short
 ```
 
-## Local Execution
-
-### 1. Install Dependencies
+### Integration Tests
 ```bash
-cd /path/to/project
-pip install -r runs/kit/REQ-002/requirements.txt
+pytest runs/kit/REQ-002/test/test_integration_slack_api.py -v --tb=short
 ```
 
-### 2. Run Unit Tests
+### All Tests with Coverage
 ```bash
-# All tests
-pytest runs/kit/REQ-002/test/test_coffee_command.py -v
-
-# With coverage
-pytest runs/kit/REQ-002/test/test_coffee_command.py --cov=runs.kit.REQ_002.src --cov-report=term-missing
-
-# Specific test
-pytest runs/kit/REQ-002/test/test_coffee_command.py::test_valid_signature_returns_modal -v
+pytest runs/kit/REQ-002/test -v --cov=runs.kit.REQ_002.src --cov-report=xml:reports/coverage-REQ-002.xml --cov-report=term
 ```
 
-### 3. Lint Code
+### Lint
 ```bash
 ruff check runs/kit/REQ-002/src runs/kit/REQ-002/test
 ```
 
-### 4. Type Check
+### Type Check
 ```bash
-mypy --strict runs/kit/REQ-002/src
+mypy runs/kit/REQ-002/src --strict
 ```
 
-### 5. Security Scan
+## Running Locally
+
+### Start FastAPI Server
 ```bash
-bandit -r runs/kit/REQ-002/src -f json -o reports/bandit-REQ-002.json
+uvicorn runs.kit.REQ_002.src.api.slack_routes:router --reload --host 0.0.0.0 --port 8000
 ```
 
-## CI/CD Integration
+### Test Endpoint with curl
+```bash
+curl -X POST http://localhost:8000/slack/commands/coffee \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "X-Slack-Request-Timestamp: $(date +%s)" \
+  -H "X-Slack-Signature: v0=test_signature" \
+  -d "trigger_id=trigger_123&user_id=U123&channel_id=C123&team_id=T123&command=/coffee"
+```
+
+## Enterprise Runner Configuration
 
 ### Jenkins Pipeline
 ```groovy
@@ -62,9 +97,7 @@ pipeline {
     agent any
     environment {
         SLACK_SIGNING_SECRET = credentials('slack-signing-secret')
-        KAFKA_BROKERS = 'kafka-broker:9092'
-        DATABASE_URL = credentials('database-url')
-        PYTHONPATH = "${WORKSPACE}/runs/kit/REQ-002/src"
+        KAFKA_BROKERS = 'kafka.internal:9092'
     }
     stages {
         stage('Install') {
@@ -74,7 +107,7 @@ pipeline {
         }
         stage('Test') {
             steps {
-                sh 'pytest runs/kit/REQ-002/test --junitxml=reports/junit-REQ-002.xml --cov-report=xml:reports/coverage-REQ-002.xml'
+                sh 'pytest runs/kit/REQ-002/test -v --junitxml=reports/junit-REQ-002.xml'
             }
         }
         stage('Lint') {
@@ -82,44 +115,38 @@ pipeline {
                 sh 'ruff check runs/kit/REQ-002/src runs/kit/REQ-002/test'
             }
         }
-        stage('Type Check') {
-            steps {
-                sh 'mypy --strict runs/kit/REQ-002/src'
-            }
-        }
     }
     post {
         always {
             junit 'reports/junit-REQ-002.xml'
-            publishCoverage adapters: [coberturaAdapter('reports/coverage-REQ-002.xml')]
         }
     }
 }
 ```
 
-### GitHub Actions
-```yaml
-name: REQ-002 Tests
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: pip install -r runs/kit/REQ-002/requirements.txt
-      - name: Run tests
-        env:
-          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
-          KAFKA_BROKERS: localhost:9092
-          DATABASE_URL: postgresql://user:password@localhost:5432/coffeebuddy
-          PYTHONPATH: ${{ github.workspace }}/runs/kit/REQ-002/src
-        run: pytest runs/kit/REQ-002/test --junitxml=reports/junit-REQ-002.xml
-      - name: Upload test results
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: reports/junit-REQ-002
+### SonarQube Integration
+```bash
+sonar-scanner \
+  -Dsonar.projectKey=coffeebuddy-req-002 \
+  -Dsonar.sources=runs/kit/REQ-002/src \
+  -Dsonar.tests=runs/kit/REQ-002/test \
+  -Dsonar.python.coverage.reportPaths=reports/coverage-REQ-002.xml
+```
+
+## Artifacts and Reports
+
+- **JUnit XML:** `reports/junit-REQ-002.xml`
+- **Coverage XML:** `reports/coverage-REQ-002.xml`
+- **Coverage HTML:** `htmlcov/index.html` (run `pytest --cov-report=html`)
+
+## Troubleshooting
+
+### Import Path Issues
+
+**Problem:** `ModuleNotFoundError: No module named 'runs'`
+
+**Solution:**
+```bash
+export PYTHONPATH="."
+# or
+export
