@@ -1,0 +1,90 @@
+{
+  "version": "1.0",
+  "req_id": "REQ-002",
+  "lane": "python",
+  "env": {
+    "SLACK_SIGNING_SECRET": "test_secret_for_ci",
+    "KAFKA_BROKERS": "localhost:9092",
+    "DATABASE_URL": "postgresql://user:password@localhost:5432/coffeebuddy",
+    "PYTHONPATH": "${PYTHONPATH}:${PWD}/runs/kit/REQ-002/src"
+  },
+  "cases": [
+    {
+      "name": "install_deps",
+      "run": "pip install -q -r runs/kit/REQ-002/requirements.txt",
+      "cwd": ".",
+      "expect": 0
+    },
+    {
+      "name": "unit_tests",
+      "run": "pytest -q --tb=short runs/kit/REQ-002/test/test_coffee_command.py",
+      "cwd": ".",
+      "expect": 0,
+      "timeout": 30
+    },
+    {
+      "name": "lint",
+      "run": "ruff check runs/kit/REQ-002/src runs/kit/REQ-002/test",
+      "cwd": ".",
+      "expect": 0
+    },
+    {
+      "name": "type_check",
+      "run": "mypy --strict runs/kit/REQ-002/src",
+      "cwd": ".",
+      "expect": 0
+    }
+  ],
+  "tools": {
+    "tests": "pytest",
+    "lint": "ruff",
+    "types": "mypy",
+    "security": "bandit",
+    "build": "none"
+  },
+  "commands": {
+    "install": "pip install -r runs/kit/REQ-002/requirements.txt",
+    "test": "pytest runs/kit/REQ-002/test",
+    "lint": "ruff check runs/kit/REQ-002/src runs/kit/REQ-002/test",
+    "typecheck": "mypy --strict runs/kit/REQ-002/src"
+  },
+  "reports": [
+    {
+      "kind": "junit",
+      "path": "reports/junit-REQ-002.xml",
+      "format": "junit-xml"
+    },
+    {
+      "kind": "coverage",
+      "path": "reports/coverage-REQ-002.xml",
+      "format": "coverage-xml"
+    }
+  ],
+  "gate_policy": {
+    "tests_pass": true,
+    "coverage_min": 0.8,
+    "security": {
+      "bandit_high": 0,
+      "bandit_medium": 0
+    }
+  },
+  "normalize": {
+    "tests": {
+      "passed": "$.tests.passed",
+      "failed": "$.tests.failed",
+      "skipped": "$.tests.skipped"
+    },
+    "coverage": {
+      "line_rate": "$.coverage.line_rate"
+    }
+  },
+  "constraints_applied": {
+    "runtime": "python",
+    "platform": "kubernetes",
+    "api": ["slack.events", "rest"],
+    "messaging": ["kafka"]
+  }
+}
+```
+
+```markdown

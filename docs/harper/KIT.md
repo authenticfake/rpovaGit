@@ -1,3 +1,3 @@
-# KIT Output — REQ-001: Database Schema & Migrations
+# KIT Output — REQ-002
 
 ## File Artifacts
