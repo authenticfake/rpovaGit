@@ -1,0 +1,14 @@
+{
+  "profile": "/Users/a.franco/dev/authenticfake/rpovaGit/runs/kit/REQ-001/ci/LTC.json",
+  "req_id": "REQ-001",
+  "mode": "manual",
+  "passed": true,
+  "failed": 0,
+  "cases": [
+    {
+      "name": "manual::REQ-001",
+      "passed": true,
+      "code": 0
+    }
+  ]
+}
