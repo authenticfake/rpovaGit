@@ -5,312 +5,409 @@
 - **Progress:** 0% complete (0 / 18)
 - **Checklist:**
   - [x] SPEC aligned
-  - [x] Prior REQ reconciled (none exist)
+  - [x] Prior REQ reconciled (no prior plan exists)
   - [x] Dependencies mapped
   - [x] KIT-readiness per REQ confirmed
 
 ## Tracks & Scope Boundaries
 
 **Tracks:**
-- **App Track:** Core business logic, Slack integration, API endpoints, event processing, runner assignment algorithm, user preferences, audit logging
-- **Infra Track:** Kubernetes deployment, Kong Gateway configuration, Ory Hydra/Kratos integration, Vault secrets injection, Prometheus/Grafana observability setup
+- **App Track:** Core business logic, Slack integration, API endpoints, event processing, runner assignment algorithm, user preferences, audit logging (REQ-001 through REQ-012)
+- **Infra Track:** Kubernetes deployment, Kong Gateway configuration, Vault integration, Kafka topic setup, PostgreSQL schema deployment, monitoring stack (REQ-013 through REQ-018)
 
 **Scope Boundaries:**
-- **In Scope:** Slack command handlers, order management, runner assignment fairness algorithm, Kafka event producers/consumers, PostgreSQL schema and queries, OIDC token validation, metrics instrumentation
-- **Out of Scope:** Payment processing, external delivery APIs, mobile apps, GPS tracking, multi-tenant SaaS, ML-based predictions, calendar integrations
-
-**Deferred to Infra Track:**
-- Kubernetes Helm chart creation and deployment
-- Kong Gateway route configuration and OIDC plugin setup
-- Ory Hydra/Kratos service account provisioning
-- Vault secret injection via Kubernetes service account
-- Prometheus scrape configuration and Grafana dashboard creation
-- CI/CD Jenkins pipeline setup
+- **In Scope:** Slack command handlers, runner fairness algorithm, event-driven architecture, OIDC authentication, on-prem deployment
+- **Out of Scope:** Payment processing, external delivery APIs, mobile apps, GPS tracking, multi-tenant SaaS, ML-based predictions, calendar integration
+- **Deferred:** Advanced analytics dashboards, automated run scheduling, order editing in threads
 
 ## REQ-IDs Table
 
 | ID | Title | Acceptance (bullets) | DependsOn [IDs] | Track | Status |
 |----|-------|---------------------|-----------------|-------|--------|
-| REQ-001 | PostgreSQL Schema Definition | Schema creates all tables<br>Indexes on foreign keys exist<br>ENUM types defined correctly<br>Timestamps default to NOW()<br>UUIDs use gen_random_uuid() | [] | App | open |
-| REQ-002 | Database Connection Pool | Pool initializes with max 20 connections<br>Connection timeout set to 5s<br>Health check query executes on startup<br>Graceful shutdown closes all connections<br>Metrics expose active/idle connection counts | [REQ-001] | App | open |
-| REQ-003 | Vault Secrets Client | Client authenticates via Kubernetes service account<br>Fetches Slack signing secret successfully<br>Fetches PostgreSQL credentials successfully<br>Caches secrets for 5 minutes<br>Retries with exponential backoff on failure | [] | App | open |
-| REQ-004 | Slack Signature Verification Middleware | Middleware validates X-Slack-Signature header<br>Rejects requests with invalid signatures (401)<br>Rejects requests older than 5 minutes (401)<br>Logs verification failures to Prometheus<br>Passes valid requests to handler | [REQ-003] | App | open |
-| REQ-005 | Slack Command Handler — /coffee | Responds within 2 seconds with modal payload<br>Modal includes drink_type dropdown (5 options)<br>Modal includes size radio buttons (3 options)<br>Modal includes customizations text input<br>Returns HTTP 200 with application/json | [REQ-004] | App | open |
-| REQ-006 | Slack Interaction Handler — Order Submission | Parses modal submission payload<br>Creates CoffeeRun record if first order<br>Inserts Order record with user_id and run_id<br>Publishes coffee.order.placed event to Kafka<br>Returns HTTP 200 with thread update message | [REQ-002, REQ-004, REQ-007] | App | open |
-| REQ-007 | Kafka Producer — Event Publishing | Producer initializes with 3 partition topic<br>Publishes events with user_id as partition key<br>Confirms delivery with acks=all<br>Retries up to 3 times on failure<br>Logs publish failures to Prometheus | [] | App | open |
-| REQ-008 | Runner Assignment Algorithm | Queries last 30 days of runs per user<br>Excludes users with no orders in 14 days<br>Selects user with minimum run count<br>Breaks ties by earliest last_run timestamp<br>Updates CoffeeRun.runner_user_id atomically | [REQ-002] | App | open |
-| REQ-009 | Kafka Consumer — Runner Assignment Trigger | Consumes coffee.order.placed events<br>Triggers assignment after 5-minute window or 5 orders<br>Calls runner assignment algorithm<br>Publishes coffee.runner.assigned event<br>Commits offset after successful processing | [REQ-007, REQ-008] | App | open |
-| REQ-010 | Slack Messaging Client — DM Sender | Sends DM via chat.postMessage API<br>Includes order summary with markdown formatting<br>Attaches "Mark Complete" button with callback_id<br>Retries with exponential backoff on HTTP 429<br>Logs rate limit events to Prometheus | [REQ-003] | App | open |
-| REQ-011 | Reminder Scheduler — Runner Notification | Schedules reminder 5 minutes after assignment<br>Fetches runner_user_id from CoffeeRun<br>Calls Slack DM sender with reminder message<br>Updates reminder_sent_at timestamp<br>Handles cancellation if run completed early | [REQ-002, REQ-010] | App | open |
-| REQ-012 | Slack Interaction Handler — Mark Complete | Parses button click payload<br>Validates runner_user_id matches clicker<br>Updates CoffeeRun status to completed<br>Publishes coffee.run.completed event<br>Posts completion message in thread | [REQ-002, REQ-004, REQ-007] | App | open |
-| REQ-013 | User Preferences — Storage and Retrieval | Inserts/updates UserPreference on order placement<br>Increments order_count for matching preferences<br>Retrieves top 3 preferences by order_count<br>Returns preferences sorted by last_ordered_at<br>Handles missing preferences gracefully | [REQ-002] | App | open |
-| REQ-014 | Slack Command Handler — /coffee-history | Queries last 10 CoffeeRun records for user<br>Joins with Order to get order counts<br>Formats response with timestamps and runner names<br>Returns HTTP 200 within 2 seconds<br>Handles empty history with friendly message | [REQ-002, REQ-004] | App | open |
-| REQ-015 | Slack Command Handler — /coffee-cancel | Validates user is initiator or runner<br>Updates CoffeeRun status to cancelled<br>Publishes coffee.run.cancelled event<br>Posts cancellation message in thread<br>Returns HTTP 403 if unauthorized | [REQ-002, REQ-004, REQ-007] | App | open |
-| REQ-016 | Audit Logging — Event Persistence | Inserts AuditLog record for each event type<br>Stores event_type, user_id, run_id, payload<br>Payload serialized as JSONB<br>Timestamp defaults to NOW()<br>Retention policy enforced via cron job (90 days) | [REQ-002] | App | open |
-| REQ-017 | Prometheus Metrics Instrumentation | Exposes /metrics endpoint with histogram for command latency<br>Counter for order placements by drink_type<br>Gauge for active runs<br>Counter for runner assignments<br>Counter for errors by type | [] | App | open |
-| REQ-018 | Circuit Breaker — PostgreSQL Resilience | Opens after 5 consecutive connection failures<br>Half-opens after 30 seconds<br>Returns HTTP 503 during open state<br>Logs state transitions to Prometheus<br>Recovers automatically when database available | [REQ-002] | App | open |
+| REQ-001 | Slack Command Handler Foundation | FastAPI endpoint accepts POST /slack/commands<br>Validates Slack signature using signing secret<br>Returns 200 with ephemeral message within 2s<br>Logs command metadata to structured JSON<br>Handles /coffee, /coffee-history, /coffee-cancel commands | [] | App | open |
+| REQ-002 | Order Submission Modal | Opens Slack modal with drink type, size, customization fields<br>Validates modal submission payload<br>Persists order to PostgreSQL orders table<br>Publishes coffee.order.placed event to Kafka<br>Returns confirmation message to user within 5s | [REQ-001] | App | open |
+| REQ-003 | Coffee Run Lifecycle Management | Creates CoffeeRun entity with status=active<br>Generates UUID for run_id<br>Associates run with workspace_id and channel_id<br>Stores initiator_user_id from Slack payload<br>Publishes coffee.run.created event to Kafka | [REQ-001] | App | open |
+| REQ-004 | Runner Assignment Algorithm | Queries last 30 days of runs per user<br>Calculates weighted fairness score (fewest runs wins)<br>Excludes users with no orders in 14 days<br>Updates CoffeeRun.runner_user_id atomically<br>Publishes coffee.runner.assigned event to Kafka | [REQ-003] | App | open |
+| REQ-005 | Runner Notification System | Sends Slack DM to assigned runner within 5 minutes<br>Includes order summary with drink types and sizes<br>Attaches "Mark Complete" interactive button<br>Updates reminder_sent_at timestamp in PostgreSQL<br>Retries with exponential backoff on Slack API failure | [REQ-004] | App | open |
+| REQ-006 | Run Completion Handler | Validates button interaction from assigned runner<br>Updates CoffeeRun status to completed<br>Records completed_at timestamp<br>Publishes coffee.run.completed event to Kafka<br>Posts completion message in original thread | [REQ-005] | App | open |
+| REQ-007 | User Preference Tracking | Stores last 3 orders per user in UserPreference table<br>Increments order_count for each drink type<br>Updates last_ordered_at timestamp<br>Suggests most frequent order in next /coffee modal<br>Handles concurrent updates with optimistic locking | [REQ-002] | App | open |
+| REQ-008 | Coffee History Query | Retrieves last 10 runs from PostgreSQL with JOIN on orders<br>Formats response with timestamp, runner, order count<br>Returns Slack message within 2 seconds<br>Handles empty history gracefully<br>Paginates if user requests more than 10 runs | [REQ-001] | App | open |
+| REQ-009 | Run Cancellation Logic | Validates cancellation request from initiator or runner<br>Updates CoffeeRun status to cancelled<br>Publishes coffee.run.cancelled event to Kafka<br>Notifies all participants via Slack thread<br>Prevents cancellation after completion | [REQ-003] | App | open |
+| REQ-010 | Kafka Event Consumer | Subscribes to coffee.orders, coffee.assignments, coffee.completions topics<br>Processes events idempotently with offset tracking<br>Handles deserialization errors with dead-letter queue<br>Implements circuit breaker for downstream failures<br>Logs processing metrics to Prometheus | [REQ-002, REQ-004, REQ-006] | App | open |
+| REQ-011 | Audit Logging Service | Inserts AuditLog entries for all state changes<br>Captures event_type, user_id, run_id, payload as JSONB<br>Indexes by timestamp and event_type<br>Retains logs for 90 days with automated cleanup<br>Exposes audit query API for compliance | [REQ-003, REQ-006, REQ-009] | App | open |
+| REQ-012 | Slack Rate Limit Resilience | Detects HTTP 429 responses from Slack API<br>Buffers events in Kafka with retry metadata<br>Implements exponential backoff (1s initial, 60s max)<br>Tracks retry attempts in Prometheus counter<br>Successfully delivers messages within 5 minutes | [REQ-005, REQ-006] | App | open |
+| REQ-013 | PostgreSQL Schema Deployment | Defines tables for User, CoffeeRun, Order, UserPreference, AuditLog<br>Creates indexes on user_id, run_id, created_at<br>Configures connection pooling (max 20 connections)<br>Enables SSL for encrypted connections<br>Applies migrations via Alembic or Flyway | [] | Infra | open |
+| REQ-014 | Kafka Topic Configuration | Creates topics: slack.events, coffee.orders, coffee.assignments, coffee.completions<br>Sets replication factor to 2 across 3 brokers<br>Configures partitions (3 per topic) for parallelism<br>Enables log compaction for coffee.assignments<br>Sets retention to 7 days | [] | Infra | open |
+| REQ-015 | Kong Gateway Route Setup | Configures /slack/commands and /slack/interactions routes<br>Integrates OIDC plugin with Ory Hydra for token validation<br>Enforces rate limiting (100 req/min per user)<br>Adds request logging to Prometheus<br>Sets up health check endpoint /health | [] | Infra | open |
+| REQ-016 | Vault Secrets Integration | Stores Slack signing secret, PostgreSQL credentials, Kafka SASL config<br>Configures Kubernetes service account for Vault access<br>Injects secrets as environment variables via init container<br>Implements secret rotation every 90 days<br>Audits secret access in Vault logs | [] | Infra | open |
+| REQ-017 | Kubernetes Deployment Manifest | Defines Helm chart with 3 replicas for high availability<br>Configures resource requests (1 vCPU, 2 GB RAM per pod)<br>Sets liveness and readiness probes on /health endpoint<br>Mounts ConfigMaps for workspace_id, Kafka brokers<br>Applies PodDisruptionBudget (min 2 available) | [REQ-013, REQ-014, REQ-015, REQ-016] | Infra | open |
+| REQ-018 | Observability Stack Setup | Deploys Prometheus with /metrics scrape config<br>Creates Grafana dashboards for command latency, order volume, error rates<br>Configures alerting rules for high error rate (>1%)<br>Sets up Fluentd for structured log aggregation<br>Integrates with existing on-prem monitoring | [REQ-017] | Infra | open |
 
 ### Acceptance — REQ-001
-- Schema migration script creates `users`, `coffee_runs`, `orders`, `user_preferences`, `audit_logs` tables
-- Foreign key constraints exist on `coffee_runs.initiator_user_id`, `coffee_runs.runner_user_id`, `orders.run_id`, `orders.user_id`
-- Indexes created on `coffee_runs.workspace_id`, `coffee_runs.status`, `orders.run_id`, `user_preferences.user_id`
-- ENUM type `run_status` defined with values `active`, `completed`, `cancelled`
-- All timestamp columns default to `NOW()` and UUID columns use `gen_random_uuid()`
+- FastAPI application starts and binds to port 8000 within 5 seconds
+- POST /slack/commands endpoint returns 200 status code with valid JSON response
+- Slack signature validation rejects requests with invalid signatures (returns 401)
+- Command metadata (user_id, channel_id, command, timestamp) logged to stdout as structured JSON
+- Supports /coffee, /coffee-history, /coffee-cancel commands with distinct handlers
+- Response time measured at p95 is under 2 seconds under 50 concurrent requests
+- Unit tests cover signature validation, command routing, and error handling
 
 ### Acceptance — REQ-002
-- Connection pool initializes with `max_connections=20`, `min_connections=5`, `timeout=5s`
-- Health check query `SELECT 1` executes successfully on application startup
-- Graceful shutdown waits up to 10 seconds for active queries before closing connections
-- Prometheus metrics `db_connections_active` and `db_connections_idle` exposed
-- Connection acquisition failures logged with error details
+- Slack modal opens within 2 seconds of /coffee command invocation
+- Modal includes dropdown for drink_type (Latte, Espresso, Cappuccino, Americano, Mocha)
+- Modal includes radio buttons for size (Small, Medium, Large)
+- Modal includes text input for customizations (max 200 characters)
+- Submitted order persisted to PostgreSQL orders table with all fields populated
+- Kafka event coffee.order.placed published with order_id, user_id, drink_type, size, customizations
+- User receives confirmation message in Slack thread within 5 seconds
+- Integration tests verify end-to-end flow from modal submission to database persistence
 
 ### Acceptance — REQ-003
-- Client authenticates to Vault using Kubernetes service account token from `/var/run/secrets/kubernetes.io/serviceaccount/token`
-- Fetches `slack/signing_secret` from Vault path `secret/coffeebuddy/slack`
-- Fetches `postgres/username` and `postgres/password` from Vault path `secret/coffeebuddy/db`
-- Secrets cached in memory for 5 minutes with TTL refresh
-- Retries with exponential backoff (1s, 2s, 4s, 8s) on HTTP 5xx errors
+- CoffeeRun entity created with UUID primary key (run_id)
+- Status field defaults to 'active' on creation
+- Workspace_id and channel_id extracted from Slack payload and stored
+- Initiator_user_id matches Slack user who invoked /coffee command
+- Created_at timestamp set to current UTC time
+- Kafka event coffee.run.created published with run_id, workspace_id, initiator_user_id
+- Database transaction commits atomically (no partial writes)
+- Unit tests verify entity creation with valid and invalid inputs
 
 ### Acceptance — REQ-004
-- Middleware extracts `X-Slack-Signature` and `X-Slack-Request-Timestamp` headers
-- Computes HMAC-SHA256 signature using signing secret and request body
-- Rejects requests with mismatched signatures (HTTP 401, body: `{"error": "invalid_signature"}`)
-- Rejects requests with timestamps older than 5 minutes (HTTP 401, body: `{"error": "request_expired"}`)
-- Prometheus counter `slack_signature_verification_failures_total` incremented on rejection
+- Algorithm queries CoffeeRun table for runs in last 30 days grouped by runner_user_id
+- Users with zero runs in last 30 days prioritized over users with 1+ runs
+- Among users with equal run counts, selection is deterministic (e.g., alphabetical by user_id)
+- Users with no orders in last 14 days excluded from runner pool
+- CoffeeRun.runner_user_id updated atomically using database transaction
+- Kafka event coffee.runner.assigned published with run_id, runner_user_id, assignment_timestamp
+- Fairness score (standard deviation of run counts) calculated and logged to Prometheus
+- Integration tests verify fairness over 100 simulated runs with 10 users
 
 ### Acceptance — REQ-005
-- Handler responds within 2 seconds with HTTP 200 and `Content-Type: application/json`
-- Response body contains `type: modal`, `callback_id: coffee_order_modal`
-- Modal includes `drink_type` select input with options: `Latte`, `Espresso`, `Cappuccino`, `Americano`, `Mocha`
-- Modal includes `size` radio buttons with options: `Small`, `Medium`, `Large`
-- Modal includes `customizations` plain text input with placeholder `Extra shot, oat milk, etc.`
+- Slack DM sent to runner within 5 minutes of assignment (measured via timestamp diff)
+- DM includes formatted order summary with drink_type, size, customizations per user
+- Interactive button labeled "Mark Complete" attached to DM with callback_id
+- Reminder_sent_at timestamp updated in CoffeeRun table after successful DM delivery
+- Exponential backoff implemented: 1s, 2s, 4s, 8s, 16s, 32s, 60s (max) on Slack API failure
+- Retry attempts logged to Prometheus counter slack_dm_retries_total
+- Circuit breaker opens after 5 consecutive failures, half-opens after 30 seconds
+- End-to-end test verifies DM delivery and button interaction
 
 ### Acceptance — REQ-006
-- Parses `view.state.values` from Slack modal submission payload
-- Creates `CoffeeRun` record with `status=active` if no active run exists for channel
-- Inserts `Order` record with `user_id`, `run_id`, `drink_type`, `size`, `customizations`
-- Publishes event to Kafka topic `coffee.orders` with schema `{event_type, user_id, run_id, order_id, timestamp}`
-- Returns HTTP 200 with `response_action: update`, message text includes order summary
+- Button interaction payload validated for callback_id and runner_user_id match
+- CoffeeRun status updated to 'completed' in single database transaction
+- Completed_at timestamp set to current UTC time
+- Kafka event coffee.run.completed published with run_id, runner_user_id, completed_at
+- Completion message posted in original Slack thread within 3 seconds
+- Non-runner users attempting to complete run receive error message
+- Database rollback occurs if Kafka publish fails (transactional outbox pattern)
+- Integration tests cover happy path and unauthorized completion attempts
 
 ### Acceptance — REQ-007
-- Producer initializes with `bootstrap.servers` from environment variable `KAFKA_BROKERS`
-- Publishes events to topics `coffee.orders`, `coffee.assignments`, `coffee.completions` with `acks=all`
-- Uses `user_id` as partition key for consistent ordering per user
-- Retries up to 3 times with 1-second delay on transient failures
-- Prometheus counter `kafka_publish_failures_total` incremented on exhausted retries
+- UserPreference table stores up to 3 most recent orders per user
+- Order_count incremented for each drink_type + size combination
+- Last_ordered_at timestamp updated on each new order
+- /coffee modal pre-fills drink_type and size from most frequent preference
+- Concurrent updates handled with optimistic locking (version field or SELECT FOR UPDATE)
+- Preferences older than 90 days archived or deleted
+- Query performance under 100ms for preference lookup (indexed by user_id)
+- Unit tests verify preference ranking and concurrent update handling
 
 ### Acceptance — REQ-008
-- Queries `coffee_runs` table for runs created in last 30 days, grouped by `runner_user_id`
-- Excludes users with no `orders` in last 14 days (subquery on `orders.created_at`)
-- Selects user with minimum `COUNT(run_id)` as runner
-- Breaks ties by selecting user with earliest `MAX(created_at)` (last run timestamp)
-- Updates `CoffeeRun.runner_user_id` using `UPDATE ... WHERE run_id = ? AND runner_user_id IS NULL` (atomic)
+- Query retrieves last 10 CoffeeRun records ordered by created_at DESC
+- JOIN with Order table aggregates order count per run
+- Response formatted as Slack message with timestamp, runner display_name, order count
+- Empty history returns friendly message "No coffee runs yet!"
+- Query execution time under 500ms (measured via database query log)
+- Pagination supported via optional offset parameter (e.g., /coffee-history --page 2)
+- Response delivered to Slack within 2 seconds of command invocation
+- Integration tests verify response format and pagination logic
 
 ### Acceptance — REQ-009
-- Consumer subscribes to Kafka topic `coffee.orders` with `group.id=runner-assignment-consumer`
-- Buffers events for 5 minutes or until 5 orders received for same `run_id`
-- Calls runner assignment algorithm (REQ-008) after buffer threshold met
-- Publishes `coffee.runner.assigned` event with schema `{event_type, run_id, runner_user_id, timestamp}`
-- Commits Kafka offset only after successful database update and event publish
+- Cancellation request validated: only initiator or assigned runner can cancel
+- CoffeeRun status updated to 'cancelled' in atomic transaction
+- Kafka event coffee.run.cancelled published with run_id, cancelled_by_user_id, reason
+- All participants (initiator + users with orders) notified via Slack thread
+- Cancellation blocked if status is already 'completed' (returns error message)
+- Cancelled runs excluded from runner fairness calculation
+- Audit log entry created with event_type='run_cancelled'
+- Unit tests cover authorization checks and state transition validation
 
 ### Acceptance — REQ-010
-- Calls Slack API `chat.postMessage` with `channel=<user_id>` (DM), `text=<order_summary>`
-- Message includes markdown-formatted order list with drink types and customizations
-- Attaches interactive button with `action_id: mark_complete`, `value: <run_id>`
-- Retries with exponential backoff (1s, 2s, 4s, 8s, 16s) on HTTP 429 (rate limit)
-- Prometheus counter `slack_rate_limit_events_total` incremented on HTTP 429
+- Consumer subscribes to 3 topics: coffee.orders, coffee.assignments, coffee.completions
+- Kafka offset committed only after successful event processing (at-least-once delivery)
+- Deserialization errors (invalid JSON) routed to dead-letter queue topic
+- Circuit breaker opens after 5 consecutive processing failures, half-opens after 30s
+- Processing latency (event timestamp to completion) logged to Prometheus histogram
+- Consumer group rebalancing handled gracefully (no message loss)
+- Idempotency ensured via event_id deduplication in PostgreSQL
+- Integration tests verify end-to-end event flow with simulated failures
 
 ### Acceptance — REQ-011
-- Schedules reminder task 5 minutes after `coffee.runner.assigned` event timestamp
-- Fetches `runner_user_id` from `CoffeeRun` table using `run_id`
-- Calls Slack DM sender (REQ-010) with message text `Reminder: You're the runner for coffee run <run_id>`
-- Updates `CoffeeRun.reminder_sent_at` timestamp after successful send
-- Cancels scheduled task if `CoffeeRun.status` changes to `completed` or `cancelled` before 5 minutes
+- AuditLog table insert occurs within same transaction as state change
+- Event_type values: order_placed, runner_assigned, run_completed, run_cancelled
+- Payload field stores full event context as JSONB (queryable)
+- Composite index on (timestamp, event_type) for fast range queries
+- Automated cleanup job deletes logs older than 90 days (runs daily at 2am)
+- Audit query API endpoint GET /api/v1/audit?start_date=X&end_date=Y returns paginated results
+- Query performance under 1 second for 90-day range with 10k events
+- Compliance tests verify log retention and query accuracy
 
 ### Acceptance — REQ-012
-- Parses `actions[0].value` from Slack interaction payload to extract `run_id`
-- Validates `user.id` from payload matches `CoffeeRun.runner_user_id` (returns HTTP 403 if mismatch)
-- Updates `CoffeeRun` with `status=completed`, `completed_at=NOW()` using `UPDATE ... WHERE run_id = ? AND status = 'active'`
-- Publishes `coffee.run.completed` event with schema `{event_type, run_id, runner_user_id, timestamp}`
-- Posts message in original thread with text `Coffee run completed by <@runner_user_id>!`
+- HTTP 429 response from Slack API detected and logged to Prometheus counter
+- Event buffered in Kafka topic slack.retry with retry_count metadata
+- Exponential backoff schedule: 1s, 2s, 4s, 8s, 16s, 32s, 60s (capped at 60s)
+- Retry consumer processes slack.retry topic with delay based on retry_count
+- Successful delivery after retry removes event from retry queue
+- Max retry attempts set to 10; after 10 failures, event moved to dead-letter queue
+- End-to-end latency (initial attempt to successful delivery) under 5 minutes for 95% of retries
+- Load tests verify resilience under sustained rate limiting (50 req/min)
 
 ### Acceptance — REQ-013
-- Inserts `UserPreference` record on order placement if no matching `(user_id, drink_type, size)` exists
-- Updates `order_count` and `last_ordered_at` if matching preference exists (using `ON CONFLICT ... DO UPDATE`)
-- Retrieves top 3 preferences ordered by `order_count DESC, last_ordered_at DESC`
-- Returns preferences as JSON array `[{drink_type, size, customizations, order_count}]`
-- Returns empty array `[]` if no preferences exist for user
+- Alembic migration scripts create 5 tables: users, coffee_runs, orders, user_preferences, audit_logs
+- Indexes created: users(user_id), coffee_runs(run_id, status, created_at), orders(run_id, user_id)
+- Connection pool configured with max_connections=20, overflow=5, pool_timeout=30s
+- SSL mode set to 'require' with certificate validation
+- Migration rollback tested for last 3 versions
+- Database health check query (SELECT 1) returns within 100ms
+- Schema documentation generated and stored in docs/schema.md
+- CI pipeline runs migrations against test database before deployment
 
 ### Acceptance — REQ-014
-- Queries `coffee_runs` table with `WHERE initiator_user_id = ? OR runner_user_id = ?` and `ORDER BY created_at DESC LIMIT 10`
-- Joins with `orders` table to count orders per run (`COUNT(order_id) AS order_count`)
-- Formats response as Slack message with blocks: `[{timestamp, runner_name, order_count}]`
-- Returns HTTP 200 within 2 seconds (measured by Prometheus histogram `command_latency_seconds`)
-- Returns message `No coffee runs found` if query result is empty
+- 4 Kafka topics created: slack.events, coffee.orders, coffee.assignments, coffee.completions
+- Replication factor set to 2 (tolerates 1 broker failure)
+- Partition count set to 3 per topic (supports 3 concurrent consumers)
+- Log compaction enabled for coffee.assignments (retains latest assignment per run_id)
+- Retention period set to 7 days (168 hours)
+- Topic creation idempotent (script can run multiple times without errors)
+- Kafka health check verifies all topics exist and are writable
+- Documentation includes topic schemas and partition key strategies
 
 ### Acceptance — REQ-015
-- Validates `user_id` from Slack payload matches `CoffeeRun.initiator_user_id` OR `CoffeeRun.runner_user_id`
-- Returns HTTP 403 with body `{"error": "unauthorized"}` if validation fails
-- Updates `CoffeeRun` with `status=cancelled` using `UPDATE ... WHERE run_id = ? AND status = 'active'`
-- Publishes `coffee.run.cancelled` event with schema `{event_type, run_id, cancelled_by_user_id, timestamp}`
-- Posts message in thread with text `Coffee run cancelled by <@user_id>`
+- Kong routes /slack/commands and /slack/interactions to CoffeeBuddy service
+- OIDC plugin configured with Ory Hydra issuer URL and client credentials
+- Rate limiting plugin enforces 100 req/min per consumer (identified by user_id claim)
+- Request logging plugin sends metrics to Prometheus (status code, latency, path)
+- Health check route /health bypasses authentication and returns 200 with uptime
+- Invalid OIDC tokens return 401 with WWW-Authenticate header
+- Kong admin API accessible only from internal network (firewall rule)
+- Load tests verify rate limiting accuracy under 200 req/min load
 
 ### Acceptance — REQ-016
-- Inserts `AuditLog` record for event types: `order_placed`, `runner_assigned`, `run_completed`, `run_cancelled`
-- Stores `event_type` as VARCHAR(50), `user_id` as VARCHAR(64), `run_id` as UUID, `payload` as JSONB
-- Payload includes full event details (e.g., `{drink_type, size, customizations}` for `order_placed`)
-- Timestamp defaults to `NOW()` on insert
-- Cron job deletes records older than 90 days (`DELETE FROM audit_logs WHERE timestamp < NOW() - INTERVAL '90 days'`)
+- Vault KV secrets engine stores slack_signing_secret, postgres_password, kafka_sasl_password
+- Kubernetes service account coffeebuddy-sa granted read access to secrets path
+- Init container fetches secrets and writes to /vault/secrets/ volume
+- Application reads secrets from environment variables (injected from volume)
+- Secret rotation script updates Vault and triggers pod restart (zero downtime)
+- Vault audit log records all secret access with timestamp and service account
+- Secrets never logged to stdout or stored in ConfigMaps
+- Security scan verifies no hardcoded secrets in container image
 
 ### Acceptance — REQ-017
-- Exposes `/metrics` endpoint returning Prometheus text format
-- Histogram `command_latency_seconds` with buckets `[0.1, 0.5, 1.0, 2.0, 5.0]` for `/coffee`, `/coffee-history`, `/coffee-cancel`
-- Counter `orders_total` with label `drink_type` incremented on order placement
-- Gauge `active_runs` reflecting current count of `CoffeeRun` records with `status=active`
-- Counter `errors_total` with label `error_type` incremented on exceptions
+- Helm chart deploys 3 replicas of CoffeeBuddy service across 3 nodes
+- Resource requests: 1 vCPU, 2 GB RAM per pod; limits: 2 vCPU, 4 GB RAM
+- Liveness probe: HTTP GET /health every 10s, failure threshold 3
+- Readiness probe: HTTP GET /health every 5s, success threshold 1
+- ConfigMap mounts workspace_id, kafka_brokers, postgres_host as environment variables
+- PodDisruptionBudget ensures minimum 2 pods available during rolling updates
+- Rolling update strategy: maxUnavailable=1, maxSurge=1
+- Helm upgrade tested with zero downtime (verified via continuous load test)
 
 ### Acceptance — REQ-018
-- Circuit breaker opens after 5 consecutive PostgreSQL connection failures (tracked in-memory)
-- Half-opens after 30 seconds, allowing 1 test query (`SELECT 1`)
-- Returns HTTP 503 with body `{"error": "service_unavailable"}` during open state
-- Prometheus gauge `circuit_breaker_state` with values `0=closed, 1=open, 2=half_open`
-- Closes circuit breaker after successful test query in half-open state
+- Prometheus scrapes /metrics endpoint every 15 seconds from all pods
+- Grafana dashboard includes panels: command latency (p50, p95, p99), order volume (rate), error rate (%)
+- Alerting rule fires if error rate exceeds 1% over 5-minute window
+- Fluentd DaemonSet collects logs from all pods and forwards to internal Elasticsearch
+- Log retention set to 30 days in Elasticsearch
+- Dashboard accessible at https://grafana.internal/d/coffeebuddy
+- Alert notification sent to Slack channel #ops-alerts
+- Runbook linked in alert annotation with troubleshooting steps
 
 ## Dependency Graph (textual)
 
 ```
+REQ-001 -> (no dependencies)
 REQ-002 -> REQ-001
+REQ-003 -> REQ-001
 REQ-004 -> REQ-003
-REQ-006 -> REQ-002, REQ-004, REQ-007
-REQ-009 -> REQ-007, REQ-008
-REQ-008 -> REQ-002
-REQ-010 -> REQ-003
-REQ-011 -> REQ-002, REQ-010
-REQ-012 -> REQ-002, REQ-004, REQ-007
-REQ-013 -> REQ-002
-REQ-014 -> REQ-002, REQ-004
-REQ-015 -> REQ-002, REQ-004, REQ-007
-REQ-016 -> REQ-002
-REQ-018 -> REQ-002
+REQ-005 -> REQ-004
+REQ-006 -> REQ-005
+REQ-007 -> REQ-002
+REQ-008 -> REQ-001
+REQ-009 -> REQ-003
+REQ-010 -> REQ-002, REQ-004, REQ-006
+REQ-011 -> REQ-003, REQ-006, REQ-009
+REQ-012 -> REQ-005, REQ-006
+REQ-013 -> (no dependencies)
+REQ-014 -> (no dependencies)
+REQ-015 -> (no dependencies)
+REQ-016 -> (no dependencies)
+REQ-017 -> REQ-013, REQ-014, REQ-015, REQ-016
+REQ-018 -> REQ-017
 ```
 
-**Critical Path:**
-REQ-001 → REQ-002 → REQ-008 → REQ-009 (runner assignment flow)
-REQ-003 → REQ-004 → REQ-005 (Slack command entry point)
+**Critical Path:** REQ-001 → REQ-003 → REQ-004 → REQ-005 → REQ-006 (App Track)
+
+**Parallel Tracks:**
+- App Track: REQ-001 through REQ-012 (can proceed independently)
+- Infra Track: REQ-013 through REQ-016 (can proceed in parallel with App)
+- Integration: REQ-017 and REQ-018 (require both tracks complete)
 
 ## Iteration Strategy
 
-**Batch 1 (Foundation):** REQ-001, REQ-002, REQ-003, REQ-007, REQ-017
-- **Estimation:** Medium (3-5 sessions)
-- **Goal:** Database schema, connection pooling, secrets management, Kafka producer, metrics endpoint
-- **Confidence:** High (±0 batches) — foundational components with clear contracts
+**Batch 1 (Foundation):** REQ-001, REQ-013, REQ-014, REQ-015, REQ-016
+- **Size:** Medium (2-3 days)
+- **Goal:** Establish API foundation, database schema, Kafka topics, Kong routes, Vault secrets
+- **Confidence:** High (±0 batches) — well-defined infrastructure setup
 
-**Batch 2 (Slack Integration):** REQ-004, REQ-005, REQ-010
-- **Estimation:** Small (2-3 sessions)
-- **Goal:** Slack signature verification, `/coffee` command handler, DM sender
-- **Confidence:** High (±0 batches) — well-defined Slack API interactions
+**Batch 2 (Core Workflows):** REQ-002, REQ-003, REQ-004
+- **Size:** Medium (2-3 days)
+- **Goal:** Implement order submission, run lifecycle, runner assignment algorithm
+- **Confidence:** High (±0 batches) — core business logic with clear acceptance criteria
 
-**Batch 3 (Order Flow):** REQ-006, REQ-013, REQ-016
-- **Estimation:** Medium (3-4 sessions)
-- **Goal:** Order submission, user preferences, audit logging
-- **Confidence:** Medium (±1 batch) — depends on Kafka producer stability
+**Batch 3 (Notifications & Completion):** REQ-005, REQ-006, REQ-012
+- **Size:** Medium (2-3 days)
+- **Goal:** Runner notifications, run completion, Slack rate limit resilience
+- **Confidence:** Medium (±1 batch) — depends on Slack API behavior and retry logic complexity
 
-**Batch 4 (Runner Assignment):** REQ-008, REQ-009, REQ-011
-- **Estimation:** Large (4-6 sessions)
-- **Goal:** Fairness algorithm, Kafka consumer, reminder scheduler
-- **Confidence:** Medium (±1 batch) — complex fairness logic and timing
-
-**Batch 5 (Completion & History):** REQ-012, REQ-014, REQ-015
-- **Estimation:** Small (2-3 sessions)
-- **Goal:** Mark complete handler, history command, cancel command
+**Batch 4 (User Features):** REQ-007, REQ-008, REQ-009
+- **Size:** Small (1-2 days)
+- **Goal:** User preferences, history query, run cancellation
 - **Confidence:** High (±0 batches) — straightforward CRUD operations
 
-**Batch 6 (Resilience):** REQ-018
-- **Estimation:** Small (1-2 sessions)
-- **Goal:** Circuit breaker for PostgreSQL
-- **Confidence:** High (±0 batches) — isolated resilience pattern
+**Batch 5 (Event Processing & Audit):** REQ-010, REQ-011
+- **Size:** Medium (2-3 days)
+- **Goal:** Kafka event consumer, audit logging service
+- **Confidence:** Medium (±1 batch) — requires careful idempotency and error handling
+
+**Batch 6 (Deployment & Observability):** REQ-017, REQ-018
+- **Size:** Small (1-2 days)
+- **Goal:** Kubernetes deployment, Prometheus/Grafana setup
+- **Confidence:** High (±0 batches) — standard deployment patterns
+
+**Total Estimated Duration:** 12-18 days (assuming 1 developer, sequential batches)
 
 ## Test Strategy
 
-**Per REQ:**
-- **Unit Tests:** Mock external dependencies (Slack API, Kafka, PostgreSQL, Vault); verify business logic in isolation
-- **Integration Tests:** Use Testcontainers for PostgreSQL and Kafka; verify end-to-end flows within service boundary
-- **Contract Tests:** Validate Slack API request/response schemas using recorded fixtures
+**Per-REQ Testing:**
+- **Unit Tests:** All business logic functions (runner assignment, fairness calculation, preference ranking) with 80%+ code coverage
+- **Integration Tests:** API endpoints with mocked Slack API, PostgreSQL test database, embedded Kafka (Testcontainers)
+- **Contract Tests:** Kafka event schemas validated against JSON Schema definitions
+- **Security Tests:** OIDC token validation, Slack signature verification, SQL injection prevention
 
-**Per Batch:**
-- **Batch 1:** Verify schema migrations apply cleanly; connection pool metrics accurate; Vault secrets fetched; Kafka producer publishes events
-- **Batch 2:** Verify Slack signature validation rejects invalid requests; `/coffee` modal renders correctly; DM sender retries on rate limit
-- **Batch 3:** Verify order submission creates records; preferences stored and retrieved; audit logs persisted
-- **Batch 4:** Verify fairness algorithm selects correct runner; Kafka consumer triggers assignment; reminders sent on schedule
-- **Batch 5:** Verify mark complete updates status; history command returns last 10 runs; cancel command rejects unauthorized users
-- **Batch 6:** Verify circuit breaker opens after failures; half-opens after timeout; returns 503 during open state
+**Per-Batch Testing:**
+- **Batch 1:** Infrastructure smoke tests (database connectivity, Kafka topic creation, Kong route health)
+- **Batch 2:** End-to-end workflow tests (order submission → runner assignment)
+- **Batch 3:** Resilience tests (Slack API rate limiting simulation, retry logic verification)
+- **Batch 4:** User experience tests (preference suggestion accuracy, history pagination)
+- **Batch 5:** Event processing tests (idempotency, dead-letter queue handling)
+- **Batch 6:** Deployment tests (rolling update zero downtime, health check validation)
 
-**End-to-End (E2E):**
-- Simulate full coffee run: `/coffee` → order submission → runner assignment → reminder → mark complete
-- Verify Kafka events published in correct order
-- Verify audit logs contain all events
-- Verify Prometheus metrics reflect activity
+**End-to-End Testing:**
+- **Scenario 1:** 10 users submit orders within 5 minutes → runner assigned → completion within 10 minutes
+- **Scenario 2:** Slack API returns 429 → events buffered → successful delivery within 5 minutes
+- **Scenario 3:** Database connection fails → circuit breaker opens → recovery after 30 seconds
+- **Scenario 4:** 100 concurrent /coffee commands → all respond within 2 seconds → no errors
+
+**Performance Testing:**
+- **Load Test:** 50 concurrent users, 100 orders/day sustained for 1 hour
+- **Stress Test:** 200 concurrent users, 500 orders/day for 10 minutes (identify breaking point)
+- **Soak Test:** 10 concurrent users, 50 orders/day for 24 hours (detect memory leaks)
 
 ## KIT Readiness (per REQ)
 
-**All REQs are KIT-ready** with the following structure:
+**REQ-001 (Slack Command Handler Foundation):**
+- **Paths:** `/runs/kit/REQ-001/src/handlers/slack_commands.py`, `/runs/kit/REQ-001/test/test_slack_commands.py`
+- **Scaffolds:** FastAPI app with /slack/commands endpoint, signature validation middleware, command router
+- **Commands:** `pytest test/test_slack_commands.py`, `uvicorn src.main:app --reload`
+- **Expected:** All tests pass, endpoint returns 200 with valid JSON, signature validation rejects invalid requests
+- **KIT-functional:** Yes
 
-**Paths:**
-- `/runs/kit/<REQ-ID>/src` — Implementation code (Python modules)
-- `/runs/kit/<REQ-ID>/test` — Test code (pytest fixtures and test cases)
+**REQ-002 (Order Submission Modal):**
+- **Paths:** `/runs/kit/REQ-002/src/handlers/order_modal.py`, `/runs/kit/REQ-002/test/test_order_modal.py`
+- **Scaffolds:** Modal view definition, submission handler, PostgreSQL insert, Kafka producer
+- **Commands:** `pytest test/test_order_modal.py --cov=src`, `docker-compose up postgres kafka`
+- **Expected:** Modal opens, order persisted, Kafka event published, confirmation message sent
+- **KIT-functional:** Yes
 
-**Scaffolds:**
-- `src/main.py` — FastAPI application entry point
-- `src/handlers/` — Slack command and interaction handlers
-- `src/services/` — Business logic (runner assignment, preferences)
-- `src/clients/` — External clients (Slack, Kafka, PostgreSQL, Vault)
-- `src/models/` — Pydantic models for request/response schemas
-- `test/conftest.py` — Pytest fixtures (mock clients, Testcontainers)
-- `test/unit/` — Unit tests for services and handlers
-- `test/integration/` — Integration tests with real PostgreSQL/Kafka
+**REQ-003 (Coffee Run Lifecycle Management):**
+- **Paths:** `/runs/kit/REQ-003/src/models/coffee_run.py`, `/runs/kit/REQ-003/test/test_coffee_run.py`
+- **Scaffolds:** CoffeeRun SQLAlchemy model, create_run service function, Kafka event publisher
+- **Commands:** `pytest test/test_coffee_run.py`, `alembic upgrade head`
+- **Expected:** Run created with UUID, status=active, Kafka event published
+- **KIT-functional:** Yes
 
-**Commands:**
-- `pytest test/unit` — Run unit tests (fast, no external dependencies)
-- `pytest test/integration` — Run integration tests (requires Testcontainers)
-- `pytest --cov=src --cov-report=term-missing` — Generate coverage report
+**REQ-004 (Runner Assignment Algorithm):**
+- **Paths:** `/runs/kit/REQ-004/src/services/runner_assignment.py`, `/runs/kit/REQ-004/test/test_runner_assignment.py`
+- **Scaffolds:** Fairness calculation function, database query, atomic update, Kafka publisher
+- **Commands:** `pytest test/test_runner_assignment.py --cov=src.services`, `python -m src.services.runner_assignment`
+- **Expected:** Runner selected based on fairness, CoffeeRun updated, event published
+- **KIT-functional:** Yes
 
-**Expected Pass/Fail:**
-- Unit tests: 100% pass (mocked dependencies)
-- Integration tests: 100% pass (Testcontainers provide real services)
-- Coverage: ≥80% line coverage per REQ
+**REQ-005 (Runner Notification System):**
+- **Paths:** `/runs/kit/REQ-005/src/services/notifications.py`, `/runs/kit/REQ-005/test/test_notifications.py`
+- **Scaffolds:** Slack DM sender with retry logic, exponential backoff, circuit breaker
+- **Commands:** `pytest test/test_notifications.py`, `python -m src.services.notifications --dry-run`
+- **Expected:** DM sent within 5 minutes, retry on failure, circuit breaker opens after 5 failures
+- **KIT-functional:** Yes
 
-**KIT-functional: yes** for all REQs — each REQ is independently testable with clear acceptance criteria and mocked/containerized dependencies.
+**REQ-006 (Run Completion Handler):**
+- **Paths:** `/runs/kit/REQ-006/src/handlers/completion.py`, `/runs/kit/REQ-006/test/test_completion.py`
+- **Scaffolds:** Button interaction handler, status update, Kafka publisher, thread message poster
+- **Commands:** `pytest test/test_completion.py`, `curl -X POST http://localhost:8000/slack/interactions`
+- **Expected:** Status updated to completed, event published, message posted in thread
+- **KIT-functional:** Yes
 
-## Notes
+**REQ-007 (User Preference Tracking):**
+- **Paths:** `/runs/kit/REQ-007/src/services/preferences.py`, `/runs/kit/REQ-007/test/test_preferences.py`
+- **Scaffolds:** UserPreference model, upsert logic, optimistic locking, preference ranking
+- **Commands:** `pytest test/test_preferences.py --cov=src.services`, `python -m src.services.preferences`
+- **Expected:** Preferences stored, order_count incremented, last_ordered_at updated
+- **KIT-functional:** Yes
 
-**Assumptions:**
-- Python 3.11+ runtime with FastAPI 0.104+, Pydantic v2, asyncpg for PostgreSQL, aiokafka for Kafka
-- Slack API uses current stable endpoints (no deprecated methods)
-- Ory Hydra/Kratos OIDC tokens include `sub` (user ID) and `email` claims
-- Kafka topics pre-created with 3 partitions and replication factor 2
-- PostgreSQL 15+ with `gen_random_uuid()` extension enabled
+**REQ-008 (Coffee History Query):**
+- **Paths:** `/runs/kit/REQ-008/src/handlers/history.py`, `/runs/kit/REQ-008/test/test_history.py`
+- **Scaffolds:** History query function, JOIN with orders, Slack message formatter
+- **Commands:** `pytest test/test_history.py`, `curl http://localhost:8000/api/v1/history?user_id=U123`
+- **Expected:** Last 10 runs retrieved, formatted message returned within 2 seconds
+- **KIT-functional:** Yes
 
-**Risks & Mitigations:**
-- **Risk:** Slack API rate limits (50 req/min) cause message delivery delays
-  - **Mitigation:** Kafka buffering (REQ-007, REQ-009); exponential backoff in DM sender (REQ-010)
-- **Risk:** Fairness algorithm unfair if users join/leave frequently
-  - **Mitigation:** 30-day lookback window; exclude inactive users (REQ-008)
-- **Risk:** Database connection pool exhaustion under high load
-  - **Mitigation:** Max 20 connections; circuit breaker (REQ-018); horizontal scaling of app replicas
+**REQ-009 (Run Cancellation Logic):**
+- **Paths:** `/runs/kit/REQ-009/src/handlers/cancellation.py`, `/runs/kit/REQ-009/test/test_cancellation.py`
+- **Scaffolds:** Authorization check, status update, Kafka publisher, participant notification
+- **Commands:** `pytest test/test_cancellation.py`, `curl -X POST http://localhost:8000/api/v1/runs/{run_id}/cancel`
+- **Expected:** Run cancelled, event published, participants notified, completed runs rejected
+- **KIT-functional:** Yes
 
-**Technology Choices:**
-- **FastAPI:** Modern async Python framework with OpenAPI support
-- **asyncpg:** High-performance async PostgreSQL driver
-- **aiokafka:** Async Kafka client for Python
-- **hvac:** HashiCorp Vault client for Python
-- **pytest + Testcontainers:** Test framework with containerized dependencies
-- **prometheus_client:** Prometheus metrics instrumentation
+**REQ-010 (Kafka Event Consumer):**
+- **Paths:** `/runs/kit/REQ-010/src/consumers/event_consumer.py`, `/runs/kit/REQ-010/test/test_event_consumer.py`
+- **Scaffolds:** Kafka consumer with offset management, circuit breaker, dead-letter queue
+- **Commands:** `pytest test/test_event_consumer.py`, `python -m src.consumers.event_consumer`
+- **Expected:** Events consumed, processed idempotently, failures routed to DLQ
+- **KIT-functional:** Yes
 
-**Infra Track (Deferred):**
-- Kubernetes Helm chart with Deployment, Service, ConfigMap, Secret resources
-- Kong Gateway configuration with OIDC plugin and route definitions
-- Ory Hydra/Kratos service account creation and token issuance
-- Vault policy for CoffeeBuddy service account
-- Prometheus ServiceMonitor for metrics scraping
-- Grafana dashboard JSON for command latency, order volume, error rates
-- Jenkins pipeline for build, test, Docker image push, Helm deploy
+**REQ-011 (Audit Logging Service):**
+- **Paths:** `/runs/kit/REQ-011/src/services/audit.py`, `/runs/kit/REQ-011/test/test_audit.py`
+- **Scaffolds:** AuditLog model, insert function, cleanup job, query API
+- **Commands:** `pytest test/test_audit.py`, `python -m src.services.audit --cleanup`
+- **Expected:** Logs inserted, retained for 90 days, query API returns paginated results
+- **KIT-functional:** Yes
+
+**REQ-012 (Slack Rate Limit Resilience):**
+- **Paths:** `/runs/kit/REQ-012/src/services/retry.py`, `/runs/kit/REQ-012/test/test_retry.py`
+- **Scaffolds:** Retry consumer, exponential backoff scheduler, DLQ handler
+- **Commands:** `pytest test/test_retry.py`, `python -m src.services.retry`
+- **Expected:** 429 detected, event buffered, retried with backoff, delivered within 5 minutes
+- **KIT-functional:** Yes
+
+**REQ-013 (PostgreSQL Schema Deployment):**
+- **Paths:** `/runs/kit/REQ-013/migrations/`, `/runs/kit/REQ-013/test/test_migrations.py`
+- **Scaffolds:** Alembic migration scripts, rollback tests, connection pool config
+- **Commands:** `alembic upgrade head`, `alembic downgrade -1`, `pytest test/test_migrations.py`
+- **Expected:** Tables created, indexes applied, SSL enabled, migrations reversible
+- **KIT-functional:** Yes
+
+**REQ-014 (Kafka Topic Configuration):**
+- **Paths:** `/runs/kit/REQ-014/scripts/create_topics.sh`, `/runs/kit/REQ-014/test/test_topics.py`
+- **Scaffolds:** Kafka Admin API script, topic config YAML, health check
+- **Commands:** `./scripts/create_topics.sh`, `pytest test/test_topics.py`
+- **Expected:** 4 topics created, replication factor 2, partitions 3
